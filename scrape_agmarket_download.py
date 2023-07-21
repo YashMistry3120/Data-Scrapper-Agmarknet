@@ -11,6 +11,7 @@ import time
 from selenium.webdriver.common.by import By
 import argparse
 from datetime import datetime
+import pandas as pd
 
 def retry(max_attempts=3, wait_time=5):
     def decorator(func):
@@ -65,6 +66,53 @@ def get_month_ranges(start_date, end_date):
 
     return month_ranges
 
+import openpyxl
+from bs4 import BeautifulSoup
+
+def extract_data_from_html_in_excel(file_path, sheet_name, cell_address, commodity):
+    # Load the Excel file and read the content from the specified cell
+    workbook = openpyxl.load_workbook(file_path)
+    sheet = workbook[sheet_name]
+    html_content = sheet[cell_address].value
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    rows = soup.find_all('tr')[1:]  # Skip the first row, which contains header information
+
+    data = {
+        "State Name": [],
+        "District Name": [],
+        "Market Name": [],
+        "Variety": [],
+        "Group": [],
+        "Arrivals (Tonnes)": [],
+        "Min Price (Rs./Quintal)": [],
+        "Max Price (Rs./Quintal)": [],
+        "Modal Price (Rs./Quintal)": [],
+        "Reported Date": [],
+        "commodity": []
+    }
+
+    for row in rows:
+        columns = row.find_all('td')
+        if len(columns) == 10:
+            data["State Name"].append(columns[0].text.strip())
+            data["District Name"].append(columns[1].text.strip())
+            data["Market Name"].append(columns[2].text.strip())
+            data["Variety"].append(columns[3].text.strip())
+            data["Group"].append(columns[4].text.strip())
+            data["Arrivals (Tonnes)"].append(int(columns[5].text.strip()))
+            data["Min Price (Rs./Quintal)"].append(int(columns[6].text.strip()))
+            data["Max Price (Rs./Quintal)"].append(int(columns[7].text.strip()))
+            data["Modal Price (Rs./Quintal)"].append(int(columns[8].text.strip()))
+            data["Reported Date"].append(columns[9].text.strip())
+            data["commodity"].append(commodity)
+
+    return data
+
+def save_data_as_csv(data, output_file):
+    df = pd.DataFrame(data)
+    df['Arrivals (Tonnes)'] = df['Arrival'].apply(remove_commas)
+    df.to_csv(output_file, index=False)
 
 @retry()
 def scrape_agmarket(commodity, states, start_date, end_date, time_agg):
@@ -102,34 +150,19 @@ def scrape_agmarket(commodity, states, start_date, end_date, time_agg):
             date_to.send_keys(_end_date)
             driver.find_element("id","btnGo").click()
             time.sleep(10)
-
+            driver.find_element(By.XPATH,'//*[@id="cphBody_ButtonExcel"]').click()
+            time.sleep(10)
             
-            ta=driver.find_element(By.XPATH,'//*[@id="cphBody_GridViewBoth"]')
-            header=[]
-            for i in ta.find_elements(By.TAG_NAME,"th"):
-                header.append(i.text)
+            download_path = "/home/yash/Downloads/Agmarknet_Price_And_Arrival_Report.xls"
+            sheet_name = 'Sheet1'
+            cell_address = 'C2'
+            
+            output_data = extract_data_from_html_in_excel(download_path, sheet_name, cell_address, commodity)
 
-            header = header + ["commodity"]
-            try:
-                for j in ta.find_elements(By.TAG_NAME,"tr")[1:-5]:
-                    data=[]
-                    for p in (j.find_elements(By.TAG_NAME,"td")):
-                        data.append(p.text)
-                    data = data + [commodity]
-                    if len(data) == len(header):
-                        print(data)
-                        rows.append(data)
-                    elif len(data) == len(header)-1:
-                        data = data[:5]+[rows[-1][5]]+data[5:]
-                        print(data)
-                        rows.append(data)
-            except Exception as e:
-                print(f"Data format error occurred: {e}")
-                
-    # rows list to csv conversion
-    df = pd.DataFrame(rows, columns=header)
-    df['Arrivals (Tonnes)'] = df['Arrivals (Tonnes)'].apply(remove_commas)
-    df.to_csv("agg_data.csv", index=False)
+            # Save data as CSV
+            output_csv_file = 'agg_data.csv'
+            save_data_as_csv(output_data, output_csv_file)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
